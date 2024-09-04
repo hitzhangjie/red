@@ -1,12 +1,13 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gdamore/tcell"
@@ -16,13 +17,16 @@ import (
 )
 
 var (
+	// options
 	duration    time.Duration
 	distance    int
 	format      string
 	nginxConfig string
 	nginxFormat string
 	showHelp    bool
-	keys        []string
+
+	// args
+	keys []string
 
 	app   *tview.Application
 	table *tview.Table
@@ -35,12 +39,33 @@ const (
 	firstDataColumn
 )
 
+const (
+	helpMsg = `
+"red" is an utility to visualize log events from reading or tailing log files,
+this repo is forked from https://github.com/hokaccha/red, which inspires me
+to improve "red" to support more formats, including zaplog.
+
+red support 2 formats:
+- json, 
+  {"datetime": "2024-08-22 09:00:06.956", "level": "ERROR", "pos": "dbsvr/counter.go:202" "func": "[GetCounterBatch]", "msg": "empty counter list", "process": 8982, "traceID": 16029078675928157035, "meta.PlayerID": 0}
+- zaplog,
+  2024-08-22 09:00:06.956 ERROR dbsvr/counter.go:202 [GetCounterBatch] empty counter list {"process": 8982, "traceID": 16029078675928157035, "meta.PlayerID": 0}
+`
+)
+
 func init() {
 	flag.DurationVar(&duration, "trend", 10*time.Second, "duration of trend")
 	flag.IntVar(&distance, "distance", 3, "levenshtein distance for combining similar log entities")
-	flag.StringVar(&format, "format", "json", "stdin format")
+
+	// red support 2 formats:
+	// - json: {"datetime": "2024-08-22 09:00:06.956", "level": "ERROR", "pos": "dbsvr/counter.go:202" "func": "[GetCounterBatch]", "msg": "empty counter list", "process": 8982, "traceID": 16029078675928157035, "meta.PlayerID": 0}
+	// - zaplog: 2024-08-22 09:00:06.956 ERROR dbsvr/counter.go:202 [GetCounterBatch] empty counter list {"process": 8982, "traceID": 16029078675928157035, "meta.PlayerID": 0}
+	flag.StringVar(&format, "format", "json", "stdin format, json or zaplog")
+
+	// don't need this
 	flag.StringVar(&nginxConfig, "nginx-config", "/etc/nginx/nginx.conf", "nginx config file")
 	flag.StringVar(&nginxFormat, "nginx-format", "main", "nginx log_format name")
+
 	flag.BoolVar(&showHelp, "help", false, "show help")
 }
 
@@ -49,9 +74,26 @@ func main() {
 	keys = flag.Args()
 
 	if showHelp {
+		fmt.Println(helpMsg)
+		fmt.Println()
 		flag.Usage()
 		os.Exit(2)
 	}
+
+	fout, err := os.OpenFile("red.log", os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
+	if err != nil {
+		panic(err)
+	}
+	defer fout.Close()
+	log.SetOutput(fout)
+
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	go func() {
+		<-ch
+		fout.Close()
+		os.Exit(0)
+	}()
 
 	store = NewStore(duration, distance, keys)
 	app = tview.NewApplication()
@@ -91,6 +133,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+
 		viewer.SetText(tview.TranslateANSI(string(text)))
 		viewer.ScrollToBeginning()
 	}
@@ -115,7 +158,7 @@ func main() {
 	})
 
 	switch format {
-	case "json":
+	case "json", "zaplog":
 		go read()
 	case "nginx":
 		go readNginx()
@@ -124,8 +167,7 @@ func main() {
 	go draw()
 	go shift(duration)
 
-	err := app.Run()
-	if err != nil {
+	if err := app.Run(); err != nil {
 		panic(err)
 	}
 }
@@ -159,13 +201,21 @@ func update(value map[string]interface{}) {
 }
 
 func read() {
-	dec := json.NewDecoder(os.Stdin)
+	var dec Decoder
+	switch format {
+	case "json":
+		dec = newJsonDecoder(os.Stdin)
+	case "zaplog":
+		dec = newZaplogDecoder(os.Stdin)
+	}
+
 	for dec.More() {
-		var value map[string]interface{}
-		err := dec.Decode(&value)
+		value, err := dec.Decode()
 		if err != nil {
-			log.Println(err)
-			app.Stop()
+			if err != io.EOF {
+				log.Println(err)
+				app.Stop()
+			}
 		}
 
 		update(value)
