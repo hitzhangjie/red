@@ -11,9 +11,10 @@ import (
 	"time"
 
 	"github.com/gdamore/tcell"
-	"github.com/hokaccha/go-prettyjson"
 	"github.com/rivo/tview"
 	"github.com/satyrius/gonx"
+
+	"github.com/antonmedv/red/internal/prettyjson"
 )
 
 var (
@@ -49,8 +50,7 @@ red support 2 formats:
 - json, 
   {"datetime": "2024-08-22 09:00:06.956", "level": "ERROR", "pos": "dbsvr/counter.go:202" "func": "[GetCounterBatch]", "msg": "empty counter list", "process": 8982, "traceID": 16029078675928157035, "meta.PlayerID": 0}
 - zaplog,
-  2024-08-22 09:00:06.956 ERROR dbsvr/counter.go:202 [GetCounterBatch] empty counter list {"process": 8982, "traceID": 16029078675928157035, "meta.PlayerID": 0}
-`
+  2024-08-22 09:00:06.956 ERROR dbsvr/counter.go:202 [GetCounterBatch] empty counter list {"process": 8982, "traceID": 16029078675928157035, "meta.PlayerID": 0}`
 )
 
 func init() {
@@ -60,7 +60,7 @@ func init() {
 	// red support 2 formats:
 	// - json: {"datetime": "2024-08-22 09:00:06.956", "level": "ERROR", "pos": "dbsvr/counter.go:202" "func": "[GetCounterBatch]", "msg": "empty counter list", "process": 8982, "traceID": 16029078675928157035, "meta.PlayerID": 0}
 	// - zaplog: 2024-08-22 09:00:06.956 ERROR dbsvr/counter.go:202 [GetCounterBatch] empty counter list {"process": 8982, "traceID": 16029078675928157035, "meta.PlayerID": 0}
-	flag.StringVar(&format, "format", "json", "stdin format, json or zaplog")
+	flag.StringVar(&format, "format", "zaplog", "stdin format, json or zaplog")
 
 	// don't need this
 	flag.StringVar(&nginxConfig, "nginx-config", "/etc/nginx/nginx.conf", "nginx config file")
@@ -133,6 +133,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+		log.Println("data after jsonmarshal", string(text))
 
 		viewer.SetText(tview.TranslateANSI(string(text)))
 		viewer.ScrollToBeginning()
