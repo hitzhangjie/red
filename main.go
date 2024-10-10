@@ -213,10 +213,12 @@ func read() {
 	for dec.More() {
 		value, err := dec.Decode()
 		if err != nil {
-			if err != io.EOF {
-				log.Println(err)
-				app.Stop()
+			if err == io.EOF {
+				continue
 			}
+
+			log.Println(err)
+			app.Stop()
 		}
 
 		update(value)
